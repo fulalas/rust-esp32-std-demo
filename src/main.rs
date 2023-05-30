@@ -1,21 +1,11 @@
 #![allow(unused_imports)]
 #![allow(clippy::single_component_path_imports)]
-//#![feature(backtrace)]
 
 #[cfg(all(feature = "qemu", not(esp32)))]
 compile_error!("The `qemu` feature can only be built for the `xtensa-esp32-espidf` target.");
 
 #[cfg(all(feature = "ip101", not(esp32)))]
 compile_error!("The `ip101` feature can only be built for the `xtensa-esp32-espidf` target.");
-
-#[cfg(all(feature = "kaluga", not(esp32s2)))]
-compile_error!("The `kaluga` feature can only be built for the `xtensa-esp32s2-espidf` target.");
-
-#[cfg(all(feature = "ttgo", not(esp32)))]
-compile_error!("The `ttgo` feature can only be built for the `xtensa-esp32-espidf` target.");
-
-#[cfg(all(feature = "heltec", not(esp32)))]
-compile_error!("The `heltec` feature can only be built for the `xtensa-esp32-espidf` target.");
 
 #[cfg(all(feature = "esp32s3_usb_otg", not(esp32s3)))]
 compile_error!(
@@ -32,11 +22,8 @@ use std::sync::{Condvar, Mutex};
 use std::{cell::RefCell, env, sync::atomic::*, sync::Arc, thread, time::*};
 
 use anyhow::{bail, Result};
-
 use log::*;
-
 use url;
-
 use smol;
 
 use embedded_hal::adc::OneShot;
@@ -113,46 +100,13 @@ static CS: esp_idf_hal::task::CriticalSection = esp_idf_hal::task::CriticalSecti
 fn main() -> Result<()> {
     esp_idf_sys::link_patches();
 
-    test_print();
-
-    test_atomics();
-
-    test_threads();
-
-    #[cfg(not(esp_idf_version = "4.3"))]
-    test_fs()?;
-
     // Bind the log crate to the ESP Logging facilities
     esp_idf_svc::log::EspLogger::initialize_default();
-
-    // Get backtraces from anyhow; only works for Xtensa arch currently
-    // TODO: No longer working with ESP-IDF 4.3.1+
-    //#[cfg(target_arch = "xtensa")]
-    //env::set_var("RUST_BACKTRACE", "1");
 
     #[allow(unused)]
     let peripherals = Peripherals::take().unwrap();
     #[allow(unused)]
     let pins = peripherals.pins;
-
-    // If interrupt critical sections work fine, the code below should panic with the IWDT triggering
-    // {
-    //     info!("Testing interrupt critical sections");
-
-    //     let mut x = 0;
-
-    //     esp_idf_hal::interrupt::free(move || {
-    //         for _ in 0..2000000 {
-    //             for _ in 0..2000000 {
-    //                 x += 1;
-
-    //                 if x == 1000000 {
-    //                     break;
-    //                 }
-    //             }
-    //         }
-    //     });
-    // }
 
     {
         info!("Testing critical sections");
@@ -179,76 +133,21 @@ fn main() -> Result<()> {
 
     #[allow(unused)]
     let sysloop = EspSystemEventLoop::take()?;
-
-    #[cfg(feature = "ttgo")]
-    ttgo_hello_world(
-        pins.gpio4,
-        pins.gpio16,
-        pins.gpio23,
-        peripherals.spi2,
-        pins.gpio18,
-        pins.gpio19,
-        pins.gpio5,
-    )?;
-
-    #[cfg(feature = "waveshare_epd")]
-    waveshare_epd_hello_world(
-        peripherals.spi2,
-        pins.gpio13.into(),
-        pins.gpio14.into(),
-        pins.gpio15.into(),
-        pins.gpio25.into(),
-        pins.gpio27.into(),
-        pins.gpio26.into(),
-    )?;
-
-    #[cfg(feature = "kaluga")]
-    kaluga_hello_world(
-        pins.gpio6,
-        pins.gpio13,
-        pins.gpio16,
-        peripherals.spi3,
-        pins.gpio15,
-        pins.gpio9,
-        pins.gpio11,
-    )?;
-
-    #[cfg(feature = "heltec")]
-    heltec_hello_world(pins.gpio16, peripherals.i2c0, pins.gpio4, pins.gpio15)?;
-
-    #[cfg(feature = "ssd1306g_spi")]
-    ssd1306g_hello_world_spi(
-        pins.gpio4.into(),
-        pins.gpio16.into(),
-        peripherals.spi3,
-        pins.gpio18.into(),
-        pins.gpio23.into(),
-        pins.gpio5.into(),
-    )?;
-
-    #[cfg(feature = "ssd1306g")]
-    let mut led_power = ssd1306g_hello_world(
-        peripherals.i2c0,
-        pins.gpio14.into(),
-        pins.gpio22.into(),
-        pins.gpio21.into(),
-    )?;
-
-    #[cfg(feature = "esp32s3_usb_otg")]
-    esp32s3_usb_otg_hello_world(
+    
+    #[allow(clippy::redundant_clone)]
+    #[cfg(not(feature = "qemu"))]
+    #[allow(unused_mut)]
+    let mut wifi = wifi(
+        peripherals.modem,
+        sysloop.clone(),
         pins.gpio9,
         pins.gpio4,
         pins.gpio8,
         peripherals.spi3,
         pins.gpio6,
         pins.gpio7,
-        pins.gpio5,
-    )?;
-
-    #[allow(clippy::redundant_clone)]
-    #[cfg(not(feature = "qemu"))]
-    #[allow(unused_mut)]
-    let mut wifi = wifi(peripherals.modem, sysloop.clone())?;
+        pins.gpio5
+        )?;
 
     #[allow(clippy::redundant_clone)]
     #[cfg(feature = "qemu")]
@@ -316,23 +215,8 @@ fn main() -> Result<()> {
         eth
     };
 
-    test_tcp()?;
-
-    test_tcp_bind()?;
-
     let _sntp = sntp::EspSntp::new_default()?;
     info!("SNTP initialized");
-
-    let (eventloop, _subscription) = test_eventloop()?;
-
-    let mqtt_client = test_mqtt_client()?;
-
-    let _timer = test_timer(eventloop, mqtt_client)?;
-
-    #[cfg(not(esp_idf_version = "4.3"))]
-    test_tcp_bind_async()?;
-
-    test_https_client()?;
 
     #[cfg(not(feature = "qemu"))]
     #[cfg(esp_idf_lwip_ipv4_napt)]
@@ -412,227 +296,11 @@ fn main() -> Result<()> {
         info!("Eth stopped");
     }
 
-    #[cfg(esp32s2)]
-    start_ulp(peripherals.ulp, cycles)?;
-
     Ok(())
-}
-
-#[allow(clippy::vec_init_then_push)]
-fn test_print() {
-    // Start simple
-    println!("Hello from Rust!");
-
-    // Check collections
-    let mut children = vec![];
-
-    children.push("foo");
-    children.push("bar");
-    println!("More complex print {children:?}");
-}
-
-#[allow(deprecated)]
-fn test_atomics() {
-    let a = AtomicUsize::new(0);
-    let v1 = a.compare_and_swap(0, 1, Ordering::SeqCst);
-    let v2 = a.swap(2, Ordering::SeqCst);
-
-    let (r1, r2) = unsafe {
-        // don't optimize our atomics out
-        let r1 = core::ptr::read_volatile(&v1);
-        let r2 = core::ptr::read_volatile(&v2);
-
-        (r1, r2)
-    };
-
-    println!("Result: {r1}, {r2}");
-}
-
-fn test_threads() {
-    let mut children = vec![];
-
-    println!("Rust main thread: {:?}", thread::current());
-
-    TLS.with(|tls| {
-        println!("Main TLS before change: {}", *tls.borrow());
-    });
-
-    TLS.with(|tls| *tls.borrow_mut() = 42);
-
-    TLS.with(|tls| {
-        println!("Main TLS after change: {}", *tls.borrow());
-    });
-
-    for i in 0..5 {
-        // Spin up another thread
-        children.push(thread::spawn(move || {
-            println!("This is thread number {}, {:?}", i, thread::current());
-
-            TLS.with(|tls| *tls.borrow_mut() = i);
-
-            TLS.with(|tls| {
-                println!("Inner TLS: {}", *tls.borrow());
-            });
-        }));
-    }
-
-    println!(
-        "About to join the threads. If ESP-IDF was patched successfully, joining will NOT crash"
-    );
-
-    for child in children {
-        // Wait for the thread to finish. Returns a result.
-        let _ = child.join();
-    }
-
-    TLS.with(|tls| {
-        println!("Main TLS after threads: {}", *tls.borrow());
-    });
-
-    thread::sleep(Duration::from_secs(2));
-
-    println!("Joins were successful.");
-}
-
-#[cfg(not(esp_idf_version = "4.3"))]
-fn test_fs() -> Result<()> {
-    assert_eq!(fs::canonicalize(PathBuf::from("."))?, PathBuf::from("/"));
-    assert_eq!(
-        fs::canonicalize(
-            PathBuf::from("/")
-                .join("foo")
-                .join("bar")
-                .join(".")
-                .join("..")
-                .join("baz")
-        )?,
-        PathBuf::from("/foo/baz")
-    );
-
-    Ok(())
-}
-
-fn test_tcp() -> Result<()> {
-    info!("About to open a TCP connection to 1.1.1.1 port 80");
-
-    let mut stream = TcpStream::connect("one.one.one.one:80")?;
-
-    let err = stream.try_clone();
-    if let Err(err) = err {
-        info!(
-            "Duplication of file descriptors does not work (yet) on the ESP-IDF, as expected: {}",
-            err
-        );
-    }
-
-    stream.write_all("GET / HTTP/1.0\n\n".as_bytes())?;
-
-    let mut result = Vec::new();
-
-    stream.read_to_end(&mut result)?;
-
-    info!(
-        "1.1.1.1 returned:\n=================\n{}\n=================\nSince it returned something, all is OK",
-        std::str::from_utf8(&result)?);
-
-    Ok(())
-}
-
-fn test_tcp_bind() -> Result<()> {
-    fn test_tcp_bind_accept() -> Result<()> {
-        info!("About to bind a simple echo service to port 8080");
-
-        let listener = TcpListener::bind("0.0.0.0:8080")?;
-
-        for stream in listener.incoming() {
-            match stream {
-                Ok(stream) => {
-                    info!("Accepted client");
-
-                    thread::spawn(move || {
-                        test_tcp_bind_handle_client(stream);
-                    });
-                }
-                Err(e) => {
-                    error!("Error: {}", e);
-                }
-            }
-        }
-
-        unreachable!()
-    }
-
-    fn test_tcp_bind_handle_client(mut stream: TcpStream) {
-        // read 20 bytes at a time from stream echoing back to stream
-        loop {
-            let mut read = [0; 128];
-
-            match stream.read(&mut read) {
-                Ok(n) => {
-                    if n == 0 {
-                        // connection was closed
-                        break;
-                    }
-                    stream.write_all(&read[0..n]).unwrap();
-                }
-                Err(err) => {
-                    panic!("{}", err);
-                }
-            }
-        }
-    }
-
-    thread::spawn(|| test_tcp_bind_accept().unwrap());
-
-    Ok(())
-}
-
-fn test_timer(
-    eventloop: EspBackgroundEventLoop,
-    mut client: EspMqttClient<ConnState<MessageImpl, EspError>>,
-) -> Result<EspTimer> {
-    use embedded_svc::event_bus::Postbox;
-
-    info!("About to schedule a one-shot timer for after 2 seconds");
-    let once_timer = EspTaskTimerService::new()?.timer(|| {
-        info!("One-shot timer triggered");
-    })?;
-
-    once_timer.after(Duration::from_secs(2))?;
-
-    thread::sleep(Duration::from_secs(3));
-
-    info!("About to schedule a periodic timer every five seconds");
-    let periodic_timer = EspTaskTimerService::new()?.timer(move || {
-        info!("Tick from periodic timer");
-
-        let now = EspSystemTime {}.now();
-
-        eventloop.post(&EventLoopMessage::new(now), None).unwrap();
-
-        client
-            .publish(
-                "rust-esp32-std-demo",
-                QoS::AtMostOnce,
-                false,
-                format!("Now is {now:?}").as_bytes(),
-            )
-            .unwrap();
-    })?;
-
-    periodic_timer.every(Duration::from_secs(5))?;
-
-    Ok(periodic_timer)
 }
 
 #[derive(Copy, Clone, Debug)]
 struct EventLoopMessage(Duration);
-
-impl EventLoopMessage {
-    pub fn new(duration: Duration) -> Self {
-        Self(duration)
-    }
-}
 
 impl EspTypedEventSource for EventLoopMessage {
     fn source() -> *const ffi::c_char {
@@ -658,380 +326,6 @@ impl EspTypedEventDeserializer<EventLoopMessage> for EventLoopMessage {
     }
 }
 
-fn test_eventloop() -> Result<(EspBackgroundEventLoop, EspBackgroundSubscription)> {
-    use embedded_svc::event_bus::EventBus;
-
-    info!("About to start a background event loop");
-    let eventloop = EspBackgroundEventLoop::new(&Default::default())?;
-
-    info!("About to subscribe to the background event loop");
-    let subscription = eventloop.subscribe(|message: &EventLoopMessage| {
-        info!("Got message from the event loop: {:?}", message.0);
-    })?;
-
-    Ok((eventloop, subscription))
-}
-
-fn test_mqtt_client() -> Result<EspMqttClient<ConnState<MessageImpl, EspError>>> {
-    info!("About to start MQTT client");
-
-    let conf = MqttClientConfiguration {
-        client_id: Some("rust-esp32-std-demo"),
-        crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
-
-        ..Default::default()
-    };
-
-    let (mut client, mut connection) =
-        EspMqttClient::new_with_conn("mqtts://broker.emqx.io:8883", &conf)?;
-
-    info!("MQTT client started");
-
-    // Need to immediately start pumping the connection for messages, or else subscribe() and publish() below will not work
-    // Note that when using the alternative constructor - `EspMqttClient::new` - you don't need to
-    // spawn a new thread, as the messages will be pumped with a backpressure into the callback you provide.
-    // Yet, you still need to efficiently process each message in the callback without blocking for too long.
-    //
-    // Note also that if you go to http://tools.emqx.io/ and then connect and send a message to topic
-    // "rust-esp32-std-demo", the client configured here should receive it.
-    thread::spawn(move || {
-        info!("MQTT Listening for messages");
-
-        while let Some(msg) = connection.next() {
-            match msg {
-                Err(e) => info!("MQTT Message ERROR: {}", e),
-                Ok(msg) => info!("MQTT Message: {:?}", msg),
-            }
-        }
-
-        info!("MQTT connection loop exit");
-    });
-
-    client.subscribe("rust-esp32-std-demo", QoS::AtMostOnce)?;
-
-    info!("Subscribed to all topics (rust-esp32-std-demo)");
-
-    client.publish(
-        "rust-esp32-std-demo",
-        QoS::AtMostOnce,
-        false,
-        "Hello from rust-esp32-std-demo!".as_bytes(),
-    )?;
-
-    info!("Published a hello message to topic \"rust-esp32-std-demo\"");
-
-    Ok(client)
-}
-
-#[cfg(not(esp_idf_version = "4.3"))]
-fn test_tcp_bind_async() -> anyhow::Result<()> {
-    async fn test_tcp_bind() -> smol::io::Result<()> {
-        /// Echoes messages from the client back to it.
-        async fn echo(stream: smol::Async<TcpStream>) -> smol::io::Result<()> {
-            smol::io::copy(&stream, &mut &stream).await?;
-            Ok(())
-        }
-
-        // Create a listener.
-        let listener = smol::Async::<TcpListener>::bind(([0, 0, 0, 0], 8081))?;
-
-        // Accept clients in a loop.
-        loop {
-            let (stream, peer_addr) = listener.accept().await?;
-            info!("Accepted client: {}", peer_addr);
-
-            // Spawn a task that echoes messages from the client back to it.
-            smol::spawn(echo(stream)).detach();
-        }
-    }
-
-    info!("About to bind a simple echo service to port 8081 using async (smol-rs)!");
-
-    #[allow(clippy::needless_update)]
-    {
-        esp_idf_sys::esp!(unsafe {
-            esp_idf_sys::esp_vfs_eventfd_register(&esp_idf_sys::esp_vfs_eventfd_config_t {
-                max_fds: 5,
-                ..Default::default()
-            })
-        })?;
-    }
-
-    thread::Builder::new().stack_size(4096).spawn(move || {
-        smol::block_on(test_tcp_bind()).unwrap();
-    })?;
-
-    Ok(())
-}
-
-fn test_https_client() -> anyhow::Result<()> {
-    use embedded_svc::http::{self, client::*, status, Headers, Status};
-    use embedded_svc::io::Read;
-    use embedded_svc::utils::io;
-    use esp_idf_svc::http::client::*;
-
-    let url = String::from("https://google.com");
-
-    info!("About to fetch content from {}", url);
-
-    let mut client = Client::wrap(EspHttpConnection::new(&Configuration {
-        crt_bundle_attach: Some(esp_idf_sys::esp_crt_bundle_attach),
-
-        ..Default::default()
-    })?);
-
-    let mut response = client.get(&url)?.submit()?;
-
-    let mut body = [0_u8; 3048];
-
-    let read = io::try_read_full(&mut response, &mut body).map_err(|err| err.0)?;
-
-    info!(
-        "Body (truncated to 3K):\n{:?}",
-        String::from_utf8_lossy(&body[..read]).into_owned()
-    );
-
-    // Complete the response
-    while response.read(&mut body)? > 0 {}
-
-    Ok(())
-}
-
-#[cfg(feature = "ttgo")]
-fn ttgo_hello_world(
-    backlight: gpio::Gpio4,
-    dc: gpio::Gpio16,
-    rst: gpio::Gpio23,
-    spi: spi::SPI2,
-    sclk: gpio::Gpio18,
-    sdo: gpio::Gpio19,
-    cs: gpio::Gpio5,
-) -> Result<()> {
-    info!("About to initialize the TTGO ST7789 LED driver");
-
-    let mut backlight = gpio::PinDriver::output(backlight)?;
-    backlight.set_high()?;
-
-    let di = SPIInterfaceNoCS::new(
-        spi::SpiDeviceDriver::new_single(
-            spi,
-            sclk,
-            sdo,
-            Option::<gpio::Gpio21>::None,
-            Some(cs),
-            &spi::SpiDriverConfig::new().dma(spi::Dma::Disabled),
-            &spi::SpiConfig::new().baudrate(26.MHz().into()),
-        )?,
-        gpio::PinDriver::output(dc)?,
-    );
-
-    let mut display = mipidsi::Builder::st7789(di)
-        .init(&mut delay::Ets, Some(gpio::PinDriver::output(rst)?))
-        .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    display
-        .set_orientation(mipidsi::options::Orientation::Portrait(false))
-        .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    // The TTGO board's screen does not start at offset 0x0, and the physical size is 135x240, instead of 240x320
-    let top_left = Point::new(52, 40);
-    let size = Size::new(135, 240);
-
-    led_draw(&mut display.cropped(&Rectangle::new(top_left, size)))
-        .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))
-}
-
-#[cfg(feature = "kaluga")]
-fn kaluga_hello_world(
-    backlight: gpio::Gpio6,
-    dc: gpio::Gpio13,
-    rst: gpio::Gpio16,
-    spi: spi::SPI3,
-    sclk: gpio::Gpio15,
-    sdo: gpio::Gpio9,
-    cs: gpio::Gpio11,
-) -> Result<()> {
-    info!("About to initialize the Kaluga ST7789 SPI LED driver");
-
-    let mut backlight = gpio::PinDriver::output(backlight)?;
-    backlight.set_high()?;
-
-    let di = SPIInterfaceNoCS::new(
-        spi::SpiDeviceDriver::new_single(
-            spi,
-            sclk,
-            sdo,
-            Option::<gpio::AnyIOPin>::None,
-            spi::Dma::Disabled,
-            Some(cs),
-            &spi::SpiConfig::new().baudrate(80.MHz().into()),
-        )?,
-        gpio::PinDriver::output(dc)?,
-    );
-
-    let mut display = mipidsi::Builder::st7789(di)
-        .init(&mut delay::Ets, Some(gpio::PinDriver::output(rst)?))
-        .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    display
-        .set_orientation(mipidsi::options::Orientation::Landscape(false))
-        .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    led_draw(&mut display).map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    Ok(())
-}
-
-#[cfg(feature = "heltec")]
-fn heltec_hello_world(
-    rst: gpio::Gpio16,
-    i2c: i2c::I2C0,
-    sda: gpio::Gpio4,
-    scl: gpio::Gpio15,
-) -> Result<()> {
-    info!("About to initialize the Heltec SSD1306 I2C LED driver");
-
-    let di = ssd1306::I2CDisplayInterface::new(i2c::I2cDriver::new(
-        i2c,
-        sda,
-        scl,
-        &i2c::I2cConfig::new().baudrate(400.kHz().into()),
-    )?);
-
-    let mut delay = delay::Ets;
-    let mut reset = gpio::PinDriver::output(rst)?;
-
-    reset.set_high()?;
-    delay.delay_ms(1 as u32);
-
-    reset.set_low()?;
-    delay.delay_ms(10 as u32);
-
-    reset.set_high()?;
-
-    let mut display = ssd1306::Ssd1306::new(
-        di,
-        ssd1306::size::DisplaySize128x64,
-        ssd1306::rotation::DisplayRotation::Rotate0,
-    )
-    .into_buffered_graphics_mode();
-
-    display
-        .init()
-        .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    led_draw(&mut display).map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    display
-        .flush()
-        .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    Ok(())
-}
-
-#[cfg(feature = "ssd1306g_spi")]
-fn ssd1306g_hello_world_spi(
-    dc: gpio::AnyOutputPin,
-    rst: gpio::AnyOutputPin,
-    spi: impl peripheral::Peripheral<P = impl spi::SpiAnyPins> + 'static,
-    sclk: gpio::AnyOutputPin,
-    sdo: gpio::AnyOutputPin,
-    cs: gpio::AnyOutputPin,
-) -> Result<()> {
-    info!("About to initialize the SSD1306 SPI LED driver");
-
-    let di = SPIInterfaceNoCS::new(
-        spi::SpiDeviceDriver::new_single(
-            spi,
-            sclk,
-            sdo,
-            Option::<gpio::AnyIOPin>::None,
-            spi::Dma::Disabled,
-            Some(cs),
-            &spi::SpiDriverConfig::new().dma(spi::Dma::Disabled),
-            &spi::SpiConfig::new().baudrate(10.MHz().into()),
-        )?,
-        gpio::PinDriver::output(dc)?,
-    );
-
-    let mut delay = delay::Ets;
-    let mut reset = gpio::PinDriver::output(rst)?;
-
-    reset.set_high()?;
-    delay.delay_ms(1 as u32);
-
-    reset.set_low()?;
-    delay.delay_ms(10 as u32);
-
-    reset.set_high()?;
-
-    let mut display = ssd1306::Ssd1306::new(
-        di,
-        ssd1306::size::DisplaySize128x64,
-        ssd1306::rotation::DisplayRotation::Rotate180,
-    )
-    .into_buffered_graphics_mode();
-
-    display
-        .init()
-        .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    led_draw(&mut display).map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    display
-        .flush()
-        .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    Ok(())
-}
-
-#[cfg(feature = "ssd1306g")]
-fn ssd1306g_hello_world(
-    i2c: impl peripheral::Peripheral<P = impl i2c::I2c> + 'static,
-    pwr: gpio::AnyOutputPin,
-    scl: gpio::AnyIOPin,
-    sda: gpio::AnyIOPin,
-) -> Result<impl OutputPin<Error = esp_idf_hal::gpio::GpioError>> {
-    info!("About to initialize a generic SSD1306 I2C LED driver");
-
-    let di = ssd1306::I2CDisplayInterface::new(i2c::I2cDriver::new(
-        i2c,
-        sda,
-        scl,
-        &i2c::I2cConfig::new().baudrate(400.kHz().into()),
-    )?);
-
-    let mut delay = delay::Ets;
-    let mut power = gpio::PinDriver::output(pwr)?;
-
-    // Powering an OLED display via an output pin allows one to shutdown the display
-    // when it is no longer needed so as to conserve power
-    //
-    // Of course, the I2C driver should also be properly de-initialized etc.
-    power.set_drive_strength(gpio::DriveStrength::I40mA)?;
-    power.set_high()?;
-    delay.delay_ms(10_u32);
-
-    let mut display = ssd1306::Ssd1306::new(
-        di,
-        ssd1306::size::DisplaySize128x64,
-        ssd1306::rotation::DisplayRotation::Rotate0,
-    )
-    .into_buffered_graphics_mode();
-
-    display
-        .init()
-        .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    led_draw(&mut display).map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    display
-        .flush()
-        .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
-
-    Ok(power)
-}
-
 #[cfg(feature = "esp32s3_usb_otg")]
 fn esp32s3_usb_otg_hello_world(
     backlight: gpio::Gpio9,
@@ -1041,6 +335,7 @@ fn esp32s3_usb_otg_hello_world(
     sclk: gpio::Gpio6,
     sdo: gpio::Gpio7,
     cs: gpio::Gpio5,
+    screen_text: &str,
 ) -> Result<()> {
     info!("About to initialize the ESP32-S3-USB-OTG SPI LED driver ST7789VW");
 
@@ -1065,14 +360,14 @@ fn esp32s3_usb_otg_hello_world(
         .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
 
     display
-        .set_orientation(mipidsi::options::Orientation::Landscape(false))
+        .set_orientation(mipidsi::options::Orientation::Landscape(true))
         .map_err(|e| anyhow::anyhow!("Display error: {:?}", e))?;
 
-    led_draw(&mut display).map_err(|e| anyhow::anyhow!("Led draw error: {:?}", e))
+    led_draw(&mut display, screen_text).map_err(|e| anyhow::anyhow!("Led draw error: {:?}", e))
 }
 
 #[allow(dead_code)]
-fn led_draw<D>(display: &mut D) -> Result<(), D::Error>
+fn led_draw<D>(display: &mut D, screen_text: &str) -> Result<(), D::Error>
 where
     D: DrawTarget + Dimensions,
     D::Color: RgbColor,
@@ -1090,7 +385,7 @@ where
         .draw(display)?;
 
     Text::new(
-        "Hello Rust!",
+        screen_text,
         Point::new(10, (display.bounding_box().size.height - 10) as i32 / 2),
         MonoTextStyle::new(&FONT_10X20, RgbColor::WHITE),
     )
@@ -1163,136 +458,18 @@ fn httpd(
     server
         .fn_handler("/", Method::Get, |req| {
             req.into_ok_response()?
-                .write_all("Hello from Rust!".as_bytes())?;
+                .write_all("mSupply FTW!".as_bytes())?;
 
             Ok(())
-        })?
-        .fn_handler("/foo", Method::Get, |_| {
-            Result::Err("Boo, something happened!".into())
         })?
         .fn_handler("/bar", Method::Get, |req| {
             req.into_response(403, Some("No permissions"), &[])?
                 .write_all("You have no permissions to access this page".as_bytes())?;
 
             Ok(())
-        })?
-        .fn_handler("/panic", Method::Get, |_| panic!("User requested a panic!"))?
-        .handler(
-            "/middleware",
-            Method::Get,
-            SampleMiddleware {}.compose(fn_handler(|_| {
-                Result::Err("Boo, something happened!".into())
-            })),
-        )?
-        .handler(
-            "/middleware2",
-            Method::Get,
-            SampleMiddleware2 {}.compose(SampleMiddleware {}.compose(fn_handler(|req| {
-                req.into_ok_response()?
-                    .write_all("Middleware2 handler called".as_bytes())?;
-
-                Ok(())
-            }))),
-        )?;
-
-    #[cfg(esp32s2)]
-    httpd_ulp_endpoints(&mut server, mutex)?;
-
-    Ok(server)
-}
-
-#[cfg(esp32s2)]
-fn httpd_ulp_endpoints(
-    server: &mut esp_idf_svc::http::server::EspHttpServer,
-    mutex: Arc<(Mutex<Option<u32>>, Condvar)>,
-) -> Result<()> {
-    use embedded_svc::http::server::registry::Registry;
-    use embedded_svc::http::server::{Request, Response};
-    use embedded_svc::io::adapters::ToStd;
-
-    server
-        .handle_get("/ulp", |_req, resp| {
-            resp.send_str(
-            r#"
-            <doctype html5>
-            <html>
-                <body>
-                    <form method = "post" action = "/ulp_start" enctype="application/x-www-form-urlencoded">
-                        Connect a LED to ESP32-S2 GPIO <b>Pin 04</b> and GND.<br>
-                        Blink it with ULP <input name = "cycles" type = "text" value = "10"> times
-                        <input type = "submit" value = "Go!">
-                    </form>
-                </body>
-            </html>
-            "#)?;
-
-            Ok(())
-        })?
-        .handle_post("/ulp_start", move |mut req, resp| {
-            let mut body = Vec::new();
-
-            ToStd::new(req.reader()).read_to_end(&mut body)?;
-
-            let cycles = url::form_urlencoded::parse(&body)
-                .filter(|p| p.0 == "cycles")
-                .map(|p| str::parse::<u32>(&p.1).map_err(Error::msg))
-                .next()
-                .ok_or(anyhow::anyhow!("No parameter cycles"))??;
-
-            let mut wait = mutex.0.lock().unwrap();
-
-            *wait = Some(cycles);
-            mutex.1.notify_one();
-
-            resp.send_str(
-                &format!(
-                r#"
-                <doctype html5>
-                <html>
-                    <body>
-                        About to sleep now. The ULP chip should blink the LED {} times and then wake me up. Bye!
-                    </body>
-                </html>
-                "#,
-                cycles))?;
-
-            Ok(())
         })?;
 
-    Ok(())
-}
-
-#[cfg(esp32s2)]
-fn start_ulp(mut ulp: esp_idf_hal::ulp::ULP, cycles: u32) -> Result<()> {
-    let cycles_var = CYCLES as *mut u32;
-
-    unsafe {
-        ulp.load(ULP)?;
-        info!("RiscV ULP binary loaded successfully");
-
-        info!(
-            "Default ULP LED blink cycles: {}",
-            ulp.read_var(cycles_var)?
-        );
-
-        ulp.write_var(cycles_var, cycles)?;
-        info!(
-            "Sent {} LED blink cycles to the ULP",
-            ulp.read_var(cycles_var)?
-        );
-
-        ulp.start()?;
-        info!("RiscV ULP started");
-
-        esp!(esp_idf_sys::esp_sleep_enable_ulp_wakeup())?;
-        info!("Wakeup from ULP enabled");
-
-        // Wake up by a timer in 60 seconds
-        info!("About to get to sleep now. Will wake up automatically either in 1 minute, or once the ULP has done blinking the LED");
-        esp_idf_sys::esp_deep_sleep(Duration::from_secs(60).as_micros() as u64);
-    }
-
-    Ok(())
+    Ok(server)
 }
 
 #[cfg(not(feature = "qemu"))]
@@ -1300,6 +477,13 @@ fn start_ulp(mut ulp: esp_idf_hal::ulp::ULP, cycles: u32) -> Result<()> {
 fn wifi(
     modem: impl peripheral::Peripheral<P = esp_idf_hal::modem::Modem> + 'static,
     sysloop: EspSystemEventLoop,
+    backlight: gpio::Gpio9,
+    dc: gpio::Gpio4,
+    rst: gpio::Gpio8,
+    spi: spi::SPI3,
+    sclk: gpio::Gpio6,
+    sdo: gpio::Gpio7,
+    cs: gpio::Gpio5,
 ) -> Result<Box<EspWifi<'static>>> {
     use std::net::Ipv4Addr;
 
@@ -1359,6 +543,17 @@ fn wifi(
 
     let ip_info = wifi.wifi().sta_netif().get_ip_info()?;
 
+    esp32s3_usb_otg_hello_world(
+        backlight,
+        dc,
+        rst,
+        spi,
+        sclk,
+        sdo,
+        cs,
+        format!("Powered by mSupply\n\nIP: {:?}", ip_info.ip.to_string().as_str()).as_str()
+    )?;
+
     info!("Wifi DHCP info: {:?}", ip_info);
 
     ping(ip_info.subnet.gateway)?;
@@ -1413,56 +608,6 @@ fn enable_napt(wifi: &mut EspWifi) -> Result<()> {
     wifi.ap_netif_mut().enable_napt(true);
 
     info!("NAPT enabled on the WiFi SoftAP!");
-
-    Ok(())
-}
-
-#[cfg(feature = "waveshare_epd")]
-fn waveshare_epd_hello_world(
-    spi: impl peripheral::Peripheral<P = impl spi::SpiAnyPins> + 'static,
-    sclk: gpio::AnyOutputPin,
-    sdo: gpio::AnyOutputPin,
-    cs: gpio::AnyOutputPin,
-    busy_in: gpio::AnyInputPin,
-    dc: gpio::AnyOutputPin,
-    rst: gpio::AnyOutputPin,
-) -> Result<()> {
-    info!("About to initialize Waveshare 4.2 e-paper display");
-
-    let mut driver = spi::SpiDeviceDriver::new_single(
-        spi,
-        sclk,
-        sdo,
-        Option::<gpio::AnyIOPin>::None,
-        spi::Dma::Disabled,
-        Option::<gpio::AnyOutputPin>::None,
-        &spi::SpiConfig::new().baudrate(26.MHz().into()),
-    )?;
-
-    // Setup EPD
-    let mut epd = Epd4in2::new(
-        &mut driver,
-        gpio::PinDriver::output(cs)?,
-        gpio::PinDriver::input(busy_in)?,
-        gpio::PinDriver::output(dc)?,
-        gpio::PinDriver::output(rst)?,
-        &mut delay::Ets,
-    )
-    .unwrap();
-
-    // Use display graphics from embedded-graphics
-    let mut buffer =
-        vec![DEFAULT_BACKGROUND_COLOR.get_byte_value(); WIDTH as usize / 8 * HEIGHT as usize];
-    let mut display = VarDisplay::new(WIDTH, HEIGHT, &mut buffer);
-
-    let style = MonoTextStyle::new(&FONT_10X20, BinaryColor::On);
-
-    // Create a text at position (20, 30) and draw it using the previously defined style
-    Text::new("Hello Rust!", Point::new(20, 30), style).draw(&mut display)?;
-
-    // Display updated frame
-    epd.update_frame(&mut driver, &display.buffer(), &mut delay::Ets)?;
-    epd.display_frame(&mut driver, &mut delay::Ets)?;
 
     Ok(())
 }
