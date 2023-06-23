@@ -76,6 +76,10 @@ use mipidsi;
 use ssd1306;
 use ssd1306::mode::DisplayConfig;
 
+extern crate fatfs;
+use crate::url::Host;
+use std::fs::File;
+
 use epd_waveshare::{epd4in2::*, graphics::VarDisplay, prelude::*};
 
 #[allow(dead_code)]
